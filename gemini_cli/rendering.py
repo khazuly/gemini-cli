@@ -37,6 +37,8 @@ class ToolRenderer:
             return "✗", "error"
         if call.state is ToolState.CANCELLED:
             return "!", "warning"
+        if call.state is ToolState.PENDING:
+            return "○", "muted"
         return "●", "running"
 
     def _duration(self, call: ToolCall) -> str:
@@ -83,16 +85,39 @@ class ToolRenderer:
         for call in self.calls:
             symbol, style = self._symbol(call)
             title = call.title or call.name
-            body = [Text(f"{symbol} {title}", style=style)]
+            # Build a compact body for each call
+            body_lines = [Text(f"{symbol} {title}", style=style)]
+
             input_summary = call.metadata.get("input_summary")
             if input_summary:
-                body.extend([Text("input:", style="muted"), Text(str(input_summary))])
+                body_lines.append(Text(""))
+                body_lines.append(Text("input:", style="muted"))
+                body_lines.append(Text(str(input_summary)))
+
+            # show other metadata keys (except input_summary)
+            other_meta = {k: v for k, v in call.metadata.items() if k != "input_summary"}
+            if other_meta:
+                body_lines.append(Text(""))
+                body_lines.append(Text("metadata:", style="muted"))
+                for k, v in other_meta.items():
+                    body_lines.append(Text(f"{k}: {v}"))
+
             result = call.display_output or call.error or ""
             if result:
-                body.extend([Text("result:", style="muted"), Text(str(result))])
+                body_lines.append(Text(""))
+                body_lines.append(Text("result:", style="muted"))
+                # truncate long results for static view but keep display_output
+                txt = str(result)
+                if len(txt) > 1000:
+                    txt = txt[:1000] + "\n... (truncated)"
+                body_lines.append(Text(txt))
+
             if call.duration is not None:
-                body.extend([Text("duration:", style="muted"), Text(self._duration(call))])
-            rows.append(Group(*body))
+                body_lines.append(Text(""))
+                body_lines.append(Text("duration:", style="muted"))
+                body_lines.append(Text(self._duration(call)))
+
+            rows.append(Group(*body_lines))
         return Panel(Group(*rows), title="Tool details", border_style="tool", box=box.ROUNDED, padding=(0, 1))
 
 
