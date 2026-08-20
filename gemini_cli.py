@@ -25,7 +25,8 @@ console = Console()
 HEADERS_FILE = Path(__file__).parent / "headers.json"
 OUTPUT_DIR = Path(__file__).parent / "image_generate_output"
 VIDEO_OUTPUT_DIR = Path(__file__).parent / "video_generate_output"
-COOKIES_FILE = Path(__file__).parent / "cookies.json"
+AUTH_DIR = Path(__file__).parent / "auth"
+COOKIES_FILE = AUTH_DIR / "cookies.json"
 
 MODELS = {
     "gemini-3.6-flash": {"name": "Gemini 3.6 Flash", "desc": "Fastest answers", "header": None},
@@ -56,8 +57,38 @@ def load_cookies():
                 cookies[k] = v
         return cookies
 
-    console.print("[red]No cookies found! Create cookies.json or headers.json[/red]")
-    sys.exit(1)
+    return None
+
+
+def manual_cookie_login():
+    console.print("\n[bold cyan]Manual Cookie Login[/bold cyan]\n")
+    console.print("[bold]Step 1:[/bold] Open [link=https://gemini.google.com/app]https://gemini.google.com/app[/link]\n")
+    console.print("[bold]Step 2:[/bold] Log in to your Google account\n")
+    console.print("[bold]Step 3:[/bold] Open DevTools (F12) → Application → Cookies → gemini.google.com\n")
+    console.print("[bold]Step 4:[/bold] Select all cookies → Copy\n")
+    console.print("[bold]Step 5:[/bold] Paste below\n")
+
+    cookie_str = Prompt.ask("[bold]Paste cookies[/bold]")
+
+    if not cookie_str:
+        console.print("[red]No cookies provided![/red]")
+        return None
+
+    cookies = {}
+    for part in cookie_str.split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            cookies[k] = v
+
+    if cookies:
+        AUTH_DIR.mkdir(exist_ok=True)
+        with open(COOKIES_FILE, "w") as f:
+            json.dump(cookies, f, indent=2)
+        console.print(f"\n[green]Saved {len(cookies)} cookies to auth/cookies.json[/green]")
+        return cookies
+    else:
+        console.print("[red]Invalid cookie format![/red]")
+        return None
 
 
 class GeminiClient:
@@ -690,7 +721,22 @@ def video_mode(client):
 
 def main():
     show_banner()
+
     cookies = load_cookies()
+
+    if not cookies:
+        console.print("[yellow]No saved cookies found[/yellow]\n")
+        console.print("[bold]1.[/dim] Paste cookies manually")
+        console.print("[dim]2.[/dim] Exit\n")
+        choice = Prompt.ask("[bold]Select", default="1")
+        if choice == "2":
+            return
+        cookies = manual_cookie_login()
+
+    if not cookies:
+        console.print("[red]No cookies available![/red]")
+        sys.exit(1)
+
     console.print(f"[green]Loaded {len(cookies)} cookies[/green]")
 
     client = GeminiClient(cookies)
