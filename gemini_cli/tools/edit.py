@@ -1,5 +1,6 @@
 from pathlib import Path
 from .base import Tool
+from .lifecycle import ToolResult
 
 
 class EditTool(Tool):
@@ -35,6 +36,22 @@ class EditTool(Tool):
             },
             "required": ["filePath", "oldString", "newString"],
         }
+
+    def title(self, args: dict) -> str | None:
+        return f"Edit {args.get('filePath', '')}"
+
+    def summarize_input(self, args: dict) -> str:
+        return f"{args.get('filePath', '')}\nreplace {'all' if args.get('replaceAll') else 'one'} match"
+
+    def summarize_result(self, args: dict, output: str) -> ToolResult:
+        metadata = {"path": args.get("filePath")}
+        count = 1
+        for word in output.split():
+            if word.isdigit():
+                count = int(word)
+                break
+        metadata["changes"] = count
+        return ToolResult(output=output, display_output=f"{count} changes", metadata=metadata)
 
     def execute(self, args: dict) -> str:
         file_path = Path(args["filePath"])

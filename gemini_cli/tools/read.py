@@ -1,5 +1,6 @@
 from pathlib import Path
 from .base import Tool
+from .lifecycle import ToolResult
 
 
 class ReadTool(Tool):
@@ -31,6 +32,27 @@ class ReadTool(Tool):
             },
             "required": ["filePath"],
         }
+
+    def title(self, args: dict) -> str | None:
+        return f"Read {args.get('filePath', '')}"
+
+    def summarize_input(self, args: dict) -> str:
+        path = args.get("filePath", "")
+        offset = args.get("offset", 1)
+        limit = args.get("limit")
+        if limit:
+            return f"{path}\nlines {offset}-{offset + limit - 1}"
+        return str(path)
+
+    def summarize_result(self, args: dict, output: str) -> ToolResult:
+        metadata = {"path": args.get("filePath")}
+        if "<type>directory</type>" in output:
+            entries = output.split("<entries>", 1)[-1].split("</entries>", 1)[0].strip().splitlines()
+            metadata["entries"] = len([entry for entry in entries if entry])
+            return ToolResult(output=output, display_output=f"{metadata['entries']} entries", metadata=metadata)
+        numbered = [line for line in output.splitlines() if line.split(":", 1)[0].isdigit()]
+        metadata["lines"] = len(numbered)
+        return ToolResult(output=output, display_output=f"{len(numbered)} lines", metadata=metadata)
 
     def execute(self, args: dict) -> str:
         file_path = Path(args["filePath"])

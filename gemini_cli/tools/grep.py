@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 from .base import Tool
+from .lifecycle import ToolResult
 
 
 class GrepTool(Tool):
@@ -32,6 +33,28 @@ class GrepTool(Tool):
             },
             "required": ["pattern"],
         }
+
+    def title(self, args: dict) -> str | None:
+        return f"Search {args.get('pattern', '')}"
+
+    def summarize_input(self, args: dict) -> str:
+        lines = [f"pattern: {args.get('pattern', '')}", f"path: {args.get('path', '.')}"]
+        if args.get("include"):
+            lines.append(f"include: {args['include']}")
+        return "\n".join(lines)
+
+    def summarize_result(self, args: dict, output: str) -> ToolResult:
+        metadata = {"pattern": args.get("pattern"), "path": args.get("path", ".")}
+        match = re.search(r"Found (\d+) matches", output)
+        if match:
+            matches = int(match.group(1))
+        elif output.startswith("No matches"):
+            matches = 0
+        else:
+            matches = len([line for line in output.splitlines() if ":" in line])
+        metadata["matches"] = matches
+        display = f"{matches}+ matches" if matches >= 100 else f"{matches} matches"
+        return ToolResult(output=output, display_output=display, metadata=metadata, truncated=matches >= 100)
 
     def execute(self, args: dict) -> str:
         pattern = args["pattern"]

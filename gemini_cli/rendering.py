@@ -23,9 +23,20 @@ class ToolRenderer:
 
     def handle(self, event: ToolEvent) -> None:
         call = event.call
+        # Ensure a single visual item per call id. Replace existing entry in-place when updates arrive.
         if call.id not in self._by_id:
             self.calls.append(call)
-        self._by_id[call.id] = call
+            self._by_id[call.id] = call
+        else:
+            # replace the old call object in the list to reflect updates
+            old = self._by_id[call.id]
+            try:
+                idx = self.calls.index(old)
+                self.calls[idx] = call
+            except ValueError:
+                # fallback: append if not found
+                self.calls.append(call)
+            self._by_id[call.id] = call
 
     def _symbol(self, call: ToolCall) -> tuple[str, str]:
         if call.state is ToolState.COMPLETED:

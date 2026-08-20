@@ -16,33 +16,116 @@ MODELS = {
 }
 
 
-def load_cookies() -> dict[str, str] | None:
+def parse_cookie_string(cookie_str: str) -> dict[str, str]:
+    cookie_str = cookie_str.strip()
+    if not cookie_str:
+        return {}
+
+    try:
+        data = json.loads(cookie_str)
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, list):
+        return {
+            str(cookie["name"]): str(cookie["value"])
+            for cookie in data
+            if isinstance(cookie, dict) and cookie.get("name") and cookie.get("value") is not None
+        }
+    if isinstance(data, dict) and data.get("cookie"):
+        return parse_cookie_string(str(data["cookie"]))
+
+    cookies = {}
+    if re.search(r'"?name"?\s*:', cookie_str) and re.search(r'"?value"?\s*:', cookie_str):
+        for block in re.findall(r"\{(.*?)\}", cookie_str, flags=re.DOTALL):
+            name_match = re.search(r'(?:^|\n|,)\s*"?name"?\s*:\s*"?([^",\n]+)"?', block)
+            value_match = re.search(r'(?:^|\n|,)\s*"?value"?\s*:\s*(".*?"|.*?)(?=\n\s*"?\w+"?\s*:|,\s*"?\w+"?\s*:|\s*$)', block, flags=re.DOTALL)
+            if name_match and value_match:
+                name = name_match.group(1).strip().strip('"\'')
+                value = value_match.group(1).strip().rstrip(",").strip().strip('"\'')
+                if name and value:
+                    cookies[name] = value.replace("\n", "")
+        return cookies
+
+    for part in cookie_str.split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            if k and v:
+                cookies[k] = v
+    return cookies
+
+
+def _parse_headers_cookies() -> dict[str, str] | None:
+    if not HEADERS_FILE.exists():
+        return None
+    with open(HEADERS_FILE) as f:
+        raw = f.read()
+    raw = re.sub(r"\n\s+", " ", raw)
+    data = json.loads(raw)
+    cookie_str = data.get("cookie", "")
+    cookies = parse_cookie_string(cookie_str)
+    return cookies or None
+
+
+def _normalize_cookie_data(data) -> dict:
+    if isinstance(data, dict) and "sessions" in data:
+        sessions = data.get("sessions", [])
+        current = data.get("current")
+        return {"current": current, "sessions": sessions if isinstance(sessions, list) else []}
+    if isinstance(data, list):
+        cookies = {c["name"]: c["value"] for c in data if "name" in c and "value" in c}
+    elif isinstance(data, dict):
+        cookies = data
+    else:
+        cookies = {}
+    return {
+        "current": "default" if cookies else None,
+        "sessions": [{"name": "default", "cookies": cookies}] if cookies else [],
+    }
+
+
+def load_cookie_sessions() -> dict:
     if COOKIES_FILE.exists():
         with open(COOKIES_FILE) as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return {c["name"]: c["value"] for c in data if "name" in c and "value" in c}
-        return data
-    if HEADERS_FILE.exists():
-        with open(HEADERS_FILE) as f:
-            raw = f.read()
-        raw = re.sub(r"\n\s+", " ", raw)
-        data = json.loads(raw)
-        cookie_str = data.get("cookie", "")
-        cookies = {}
-        for part in cookie_str.split(";"):
-            if "=" in part:
-                k, v = part.strip().split("=", 1)
-                cookies[k] = v
-        return cookies
-    return None
+            return _normalize_cookie_data(json.load(f))
+
+    cookies = _parse_headers_cookies()
+    return {
+        "current": "default" if cookies else None,
+        "sessions": [{"name": "default", "cookies": cookies}] if cookies else [],
+    }
 
 
-def save_cookies(cookies: dict[str, str]) -> None:
+def save_cookie_sessions(data: dict) -> None:
     auth_dir = COOKIES_FILE.parent
     auth_dir.mkdir(exist_ok=True)
     with open(COOKIES_FILE, "w") as f:
-        json.dump(cookies, f, indent=2)
+        json.dump(data, f, indent=2)
+
+
+def load_cookies() -> dict[str, str] | None:
+    data = load_cookie_sessions()
+    current = data.get("current")
+    sessions = data.get("sessions", [])
+    for session in sessions:
+        if session.get("name") == current:
+            return session.get("cookies") or None
+    if sessions:
+        return sessions[0].get("cookies") or None
+    return None
+
+
+def save_cookies(cookies: dict[str, str], name: str = "default") -> None:
+    data = load_cookie_sessions()
+    sessions = data.get("sessions", [])
+    for session in sessions:
+        if session.get("name") == name:
+            session["cookies"] = cookies
+            break
+    else:
+        sessions.append({"name": name, "cookies": cookies})
+    data["sessions"] = sessions
+    data["current"] = name
+    save_cookie_sessions(data)
 
 
 class GeminiClient:
@@ -87,45 +170,78 @@ class GeminiClient:
         if match:
             self.session_id = match.group(1)
 
-    def _parse_streaming_response(self, raw: str) -> str:
-        if not raw:
-            return "Empty response"
+    def _extract_texts(self, data) -> list[str]:
+        texts = []
+        if isinstance(data, str):
+            value = data.strip()
+            if value.startswith(("[", "{")):
+                try:
+                    texts.extend(self._extract_texts(json.loads(value)))
+                except json.JSONDecodeError:
+                    texts.extend(re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', value))
+            return texts
+        if isinstance(data, dict):
+            for value in data.values():
+                texts.extend(self._extract_texts(value))
+            return texts
+        if not isinstance(data, list):
+            return texts
+
+        if data and isinstance(data[0], str) and len(data[0].strip()) > 1:
+            texts.append(data[0])
+        if len(data) > 1 and isinstance(data[1], list):
+            for part in data[1]:
+                if isinstance(part, list) and part and isinstance(part[0], str) and len(part[0].strip()) > 1:
+                    texts.append(part[0])
+        for value in data:
+            texts.extend(self._extract_texts(value))
+        return texts
+
+    def _iter_stream_json(self, raw: str):
         raw = raw.lstrip()
         if raw.startswith(")]}'"):
             raw = raw[4:].lstrip()
+        lines = raw.splitlines()
+        index = 0
+        while index < len(lines):
+            line = lines[index].strip()
+            if not line:
+                index += 1
+                continue
+            json_str = None
+            if line[0].isdigit():
+                parts = line.split(maxsplit=1)
+                if len(parts) > 1:
+                    json_str = parts[1]
+                elif index + 1 < len(lines):
+                    index += 1
+                    json_str = lines[index].strip()
+            elif line.startswith(("[", "{")):
+                json_str = line
+            if json_str:
+                try:
+                    yield json.loads(json_str)
+                except json.JSONDecodeError:
+                    pass
+            index += 1
+
+    def _parse_streaming_response(self, raw: str) -> str:
+        if not raw:
+            return "Empty response"
         texts = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if not line or not line[0].isdigit():
-                continue
-            try:
-                length = int(line.split()[0])
-                json_str = line[len(str(length)):].strip()
-                if not json_str:
-                    continue
-                data = json.loads(json_str)
-                if isinstance(data, list) and len(data) > 1 and isinstance(data[1], list):
-                    inner = data[1]
-                    for item in inner:
-                        if isinstance(item, list):
-                            for sub in item:
-                                if isinstance(sub, list):
-                                    for candidate in sub:
-                                        if isinstance(candidate, list) and len(candidate) > 1:
-                                            parts = candidate[1]
-                                            if isinstance(parts, list):
-                                                for part in parts:
-                                                    if isinstance(part, list) and len(part) > 0 and isinstance(part[0], str):
-                                                        texts.append(part[0])
-            except (json.JSONDecodeError, ValueError, IndexError, TypeError):
-                continue
+        for data in self._iter_stream_json(raw):
+            texts.extend(self._extract_texts(data))
+        texts = [
+            text
+            for text in texts
+            if text
+            and not text.startswith(("wrb.fr", "di", "af."))
+            and not re.fullmatch(r"[A-Za-z0-9_-]{24,}", text)
+            and not re.fullmatch(r"[a-z]{1,4}_[A-Za-z0-9_-]+", text)
+        ]
         if not texts:
             return "Could not parse response"
-        longest = ""
-        for t in texts:
-            if len(t) > len(longest) or not longest.startswith(t):
-                longest = t
-        return longest if longest else texts[-1]
+        return max(texts, key=lambda text: (" " in text or "\n" in text or text.endswith(('.', '!', '?')), len(text)))
 
     def send_message(self, message: str, model: str | None = None, tools_enabled: bool = False) -> str:
         self._reqid = random.randint(10000, 99999)
@@ -175,6 +291,12 @@ class GeminiClient:
         }
 
         try:
+            if not self.access_token or not self.build_label or not self.session_id:
+                self.init_session()
+            if not self.access_token:
+                return "[Error] Login/session invalid. Delete this cookie session, then add fresh cookies."
+            params["bl"] = self.build_label
+            params["f.sid"] = self.session_id
             resp = self._session.post(
                 "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
                 params=params,
@@ -182,6 +304,10 @@ class GeminiClient:
                 data={"at": self.access_token, "f.req": f_req},
                 cookies=self.cookies,
             )
+            if resp.status_code in (401, 403):
+                return "[Error] Login/session expired. Delete this cookie session, then add fresh cookies."
+            if resp.status_code >= 400:
+                return f"[Error] HTTP {resp.status_code}: {resp.text[:200]}"
             return self._parse_streaming_response(resp.text)
         except Exception as e:
             return f"[Error] {e}"

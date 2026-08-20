@@ -1,5 +1,6 @@
 from pathlib import Path
 from .base import Tool
+from .lifecycle import ToolResult
 
 
 class WriteTool(Tool):
@@ -27,6 +28,19 @@ class WriteTool(Tool):
             },
             "required": ["filePath", "content"],
         }
+
+    def title(self, args: dict) -> str | None:
+        return f"Write {args.get('filePath', '')}"
+
+    def summarize_input(self, args: dict) -> str:
+        content = args.get("content", "")
+        return f"{args.get('filePath', '')}\n{len(str(content).splitlines())} lines"
+
+    def summarize_result(self, args: dict, output: str) -> ToolResult:
+        content = str(args.get("content", ""))
+        lines = len(content.splitlines())
+        metadata = {"path": args.get("filePath"), "lines": lines}
+        return ToolResult(output=output, display_output=f"{lines} lines written", metadata=metadata)
 
     def execute(self, args: dict) -> str:
         file_path = Path(args["filePath"])
