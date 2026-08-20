@@ -726,7 +726,7 @@ def main():
 
     if not cookies:
         console.print("[yellow]No saved cookies found[/yellow]\n")
-        console.print("[bold]1.[/dim] Paste cookies manually")
+        console.print("[bold]1.[/bold] Paste cookies manually")
         console.print("[dim]2.[/dim] Exit\n")
         choice = Prompt.ask("[bold]Select", default="1")
         if choice == "2":
