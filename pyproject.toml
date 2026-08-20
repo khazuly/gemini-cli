@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-gem = "gemini_cli.__main__:main"
+gem = "gemini_cli.__main__:main_cli"
 
 [tool.setuptools.packages.find]
 include = ["gemini_cli*"]
