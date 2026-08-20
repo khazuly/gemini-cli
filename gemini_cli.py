@@ -35,6 +35,12 @@ MODELS = {
 
 DEFAULT_METADATA = ["", "", "", None, None, None, None, None, None, ""]
 
+# Tool configurations for Gemini web app
+TOOLS = {
+    "search": {"enabled": False, "name": "Google Search", "desc": "Search the web for current info"},
+    "code": {"enabled": False, "name": "Code Execution", "desc": "Run Python code"},
+}
+
 
 def load_cookies():
     if COOKIES_FILE.exists():
@@ -161,7 +167,7 @@ class GeminiClient:
         ]
         return json.dumps(header)
 
-    def send_message(self, message: str, model: str = None):
+    def send_message(self, message: str, model: str = None, tools: dict = None):
         self._reqid = random.randint(10000, 99999)
 
         inner = [None] * 81
@@ -172,7 +178,6 @@ class GeminiClient:
         inner[7] = 1
         inner[10] = 1
         inner[11] = 0
-        inner[17] = [[0]]
         inner[18] = 0
         inner[27] = 1
         inner[30] = [4]
@@ -183,6 +188,17 @@ class GeminiClient:
         inner[68] = 1
         inner[79] = 1
         inner[80] = 1
+
+        # Tools configuration
+        if tools:
+            tool_list = []
+            if tools.get("search"):
+                tool_list.append(1)  # Google Search
+            if tools.get("code"):
+                tool_list.append(2)  # Code Execution
+            inner[17] = [[tool_list]] if tool_list else [[0]]
+        else:
+            inner[17] = [[0]]
 
         f_req = json.dumps([None, json.dumps(inner)])
         reqid = self._get_next_reqid()
@@ -521,8 +537,43 @@ def show_menu():
     table.add_row("2", "[bold yellow]Image[/bold yellow]", "Generate image with Imagen")
     table.add_row("3", "[bold magenta]Video[/bold magenta]", "Generate video with Veo")
     table.add_row("4", "[bold blue]Models[/bold blue]", "Select AI model")
-    table.add_row("5", "[bold red]Exit[/bold red]", "Quit")
+    table.add_row("5", "[bold cyan]Tools[/bold cyan]", "Toggle tools (search, code)")
+    table.add_row("6", "[bold red]Exit[/bold red]", "Quit")
     console.print(table)
+
+    # Show active tools
+    active = [k for k, v in TOOLS.items() if v["enabled"]]
+    if active:
+        console.print(f"[dim]Tools: {', '.join(active)}[/dim]")
+
+
+def show_tools():
+    table = Table(title="[bold]Tools[/bold]", box=box.ROUNDED, border_style="cyan", show_header=True, header_style="bold white")
+    table.add_column("#", justify="center", style="cyan", width=3)
+    table.add_column("Tool", style="white")
+    table.add_column("Status", justify="center", width=10)
+    table.add_column("Description", style="dim")
+    for i, (key, info) in enumerate(TOOLS.items(), 1):
+        status = "[green]ON[/green]" if info["enabled"] else "[red]OFF[/red]"
+        table.add_row(str(i), key, status, info["desc"])
+    console.print(table)
+
+
+def toggle_tools():
+    show_tools()
+    keys = list(TOOLS.keys())
+    choice = Prompt.ask("\n[bold]Toggle tool (number/name)", default="1")
+    if choice.isdigit() and 1 <= int(choice) <= len(keys):
+        key = keys[int(choice) - 1]
+    elif choice in TOOLS:
+        key = choice
+    else:
+        console.print("[red]Invalid tool![/red]")
+        return
+
+    TOOLS[key]["enabled"] = not TOOLS[key]["enabled"]
+    status = "[green]ON[/green]" if TOOLS[key]["enabled"] else "[red]OFF[/red]"
+    console.print(f"[bold]{key}[/bold] → {status}")
 
 
 def show_models():
@@ -564,7 +615,7 @@ def chat_mode(client, model):
                 continue
 
             with console.status("[bold yellow]Thinking...[/bold yellow]"):
-                resp = client.send_message(msg, MODELS.get(model, {}).get("header"))
+                resp = client.send_message(msg, MODELS.get(model, {}).get("header"), TOOLS)
 
             console.print(f"\n[bold green]Gemini:[/bold green]")
             console.print(Panel(resp, border_style="green", padding=(0, 1)))
@@ -759,6 +810,8 @@ def main():
         elif choice == "4":
             current_model = select_model()
         elif choice == "5":
+            toggle_tools()
+        elif choice == "6":
             console.print("[bold red]Bye![/bold red]")
             break
 
