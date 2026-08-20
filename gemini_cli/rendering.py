@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from rich import box
 from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 from .ui import console
@@ -62,63 +59,76 @@ class ToolRenderer:
         return f"{error} · {duration}" if duration else error
 
     def render_compact(self):
-        table = Table.grid(padding=(0, 1))
-        table.add_column(width=2)
-        table.add_column(ratio=1)
-        table.add_column(justify="right", no_wrap=True)
+        # Minimal, panel-less compact display. Use subtle "Working..." header when active.
+        lines: list[Text] = []
+        any_running = any(c.state in (ToolState.RUNNING, ToolState.PENDING) for c in self.calls)
+        if any_running:
+            lines.append(Text("Working...", style="muted"))
+
         for call in self.calls:
             symbol, style = self._symbol(call)
             title = call.title or call.name
             summary = self._summary(call)
-            # Combine title and summary into one cell for a compact one-line display
-            title_cell = Text(str(title), style="tool")
+            duration = self._duration(call)
+            # Build a single line: two-space indent, symbol, title, summary and duration
+            line = Text("  ")
+            line.append(symbol + " ", style=style)
+            line.append(str(title) + " ", style="tool")
             if summary:
-                title_cell.append("  ")
-                title_cell.append(str(summary), style="muted")
-            table.add_row(Text(symbol, style=style), title_cell, Text(self._duration(call), style="muted"))
-        return Panel(table, title="Working", border_style="tool", box=box.ROUNDED, padding=(0, 1))
+                line.append("  ")
+                line.append(str(summary), style="muted")
+            if duration:
+                line.append("  · ")
+                line.append(duration, style="muted")
+            lines.append(line)
+
+        if not lines:
+            return Text("")
+        return Group(*lines)
 
     def render_static(self):
+        # If details not requested, use compact view
         if not self.details:
             return self.render_compact()
-        rows = []
+        rows: list[Group] = []
         for call in self.calls:
             symbol, style = self._symbol(call)
             title = call.title or call.name
-            # Build a compact body for each call
-            body_lines = [Text(f"{symbol} {title}", style=style)]
+            body_lines: list[Text] = []
+            body_lines.append(Text(f"  {symbol} {title}", style=style))
 
             input_summary = call.metadata.get("input_summary")
             if input_summary:
                 body_lines.append(Text(""))
-                body_lines.append(Text("input:", style="muted"))
-                body_lines.append(Text(str(input_summary)))
+                body_lines.append(Text("    input:", style="muted"))
+                for line in str(input_summary).splitlines():
+                    body_lines.append(Text(f"      {line}"))
 
             # show other metadata keys (except input_summary)
             other_meta = {k: v for k, v in call.metadata.items() if k != "input_summary"}
             if other_meta:
                 body_lines.append(Text(""))
-                body_lines.append(Text("metadata:", style="muted"))
+                body_lines.append(Text("    metadata:", style="muted"))
                 for k, v in other_meta.items():
-                    body_lines.append(Text(f"{k}: {v}"))
+                    body_lines.append(Text(f"      {k}: {v}"))
 
             result = call.display_output or call.error or ""
             if result:
                 body_lines.append(Text(""))
-                body_lines.append(Text("result:", style="muted"))
-                # truncate long results for static view but keep display_output
+                body_lines.append(Text("    result:", style="muted"))
                 txt = str(result)
                 if len(txt) > 1000:
-                    txt = txt[:1000] + "\n... (truncated)"
-                body_lines.append(Text(txt))
+                    txt = txt[:1000] + "\n      ... (truncated)"
+                for line in txt.splitlines():
+                    body_lines.append(Text(f"      {line}"))
 
             if call.duration is not None:
                 body_lines.append(Text(""))
-                body_lines.append(Text("duration:", style="muted"))
-                body_lines.append(Text(self._duration(call)))
+                body_lines.append(Text("    duration:", style="muted"))
+                body_lines.append(Text(f"      {self._duration(call)}"))
 
             rows.append(Group(*body_lines))
-        return Panel(Group(*rows), title="Tool details", border_style="tool", box=box.ROUNDED, padding=(0, 1))
+        return Group(*rows)
 
 
 class ToolLive:
@@ -145,8 +155,9 @@ class ToolLive:
 
 
 def render_assistant(text: str) -> None:
-    console.print("\n[assistant]Gemini:[/assistant]")
-    console.print(Panel(Markdown(text), border_style="assistant", padding=(0, 1)))
+    # Assistant responses rendered as plain Markdown under a simple heading
+    console.print("\n[assistant]Gemini:[/assistant]\n")
+    console.print(Markdown(text))
 
 
 def render_footer(model: str, session_id: str = "", tools_enabled: bool = False) -> None:
@@ -154,4 +165,4 @@ def render_footer(model: str, session_id: str = "", tools_enabled: bool = False)
     if session_id:
         parts.append(f"session {session_id[:8]}")
     parts.append("tools on" if tools_enabled else "tools off")
-    console.rule(" · ".join(parts), style="muted")
+    console.print(f"[muted]{' · '.join(parts)}[/muted]")

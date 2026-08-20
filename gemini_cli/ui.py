@@ -1,9 +1,21 @@
 from rich.console import Console
 from rich.table import Table
-from rich.panel import Panel
-from rich import box
+from rich.theme import Theme
 
-console = Console()
+THEME = Theme({
+    "brand": "bold cyan",
+    "user": "bold cyan",
+    "assistant": "bold green",
+    "tool": "cyan",
+    "running": "yellow",
+    "success": "green",
+    "warning": "yellow",
+    "error": "red",
+    "muted": "dim",
+    "info": "blue",
+})
+
+console = Console(theme=THEME)
 
 BANNER = """
  ██████╗ ██████╗ ███████╗███╗   ██╗████████╗    ██████╗ ███████╗██╗████████╗███████╗
@@ -20,29 +32,23 @@ def show_banner():
 
 
 def show_menu(tools_enabled: bool = False):
-    table = Table(box=box.ROUNDED, border_style="cyan", show_header=True, header_style="bold magenta")
-    table.add_column("#", justify="center", style="cyan", width=3)
-    table.add_column("Option", style="white")
-    table.add_column("Description", style="dim")
-    table.add_row("1", "[bold green]Chat[/bold green]", "Send message to Gemini")
-    table.add_row("2", "[bold yellow]Image[/bold yellow]", "Generate image with Imagen")
-    table.add_row("3", "[bold magenta]Video[/bold magenta]", "Generate video with Veo")
-    table.add_row("4", "[bold blue]Models[/bold blue]", "Select AI model")
-    table.add_row("5", "[bold cyan]Tools[/bold cyan]", "Toggle tools on/off")
-    table.add_row("6", "[bold red]Exit[/bold red]", "Quit")
-    console.print(table)
+    # Minimal command-style menu without heavy borders
+    console.print("\n  [cyan]1[/cyan]  [bold green]Chat[/bold green]    Send message to Gemini")
+    console.print("  [cyan]2[/cyan]  [bold yellow]Image[/bold yellow]   Generate image with Imagen")
+    console.print("  [cyan]3[/cyan]  [bold magenta]Video[/bold magenta]   Generate video with Veo")
+    console.print("  [cyan]4[/cyan]  [bold blue]Models[/bold blue]   Select AI model")
+    console.print("  [cyan]5[/cyan]  [bold cyan]Tools[/bold cyan]   Toggle tools on/off")
+    console.print("  [cyan]6[/cyan]  [bold red]Exit[/bold red]    Quit\n")
     status = "[green]ON[/green]" if tools_enabled else "[red]OFF[/red]"
-    console.print(f"[dim]Tools: {status}[/dim]")
+    console.print(f"Tools: {status}    Model: [muted]{''}[/muted]")
 
 
 def show_models():
     from .client import MODELS
-    table = Table(title="[bold]Models[/bold]", box=box.ROUNDED, border_style="blue", show_header=True, header_style="bold white")
-    table.add_column("Key", style="cyan", width=25)
-    table.add_column("Name", style="white")
+    console.print("\nAvailable models:")
     for key, info in MODELS.items():
-        table.add_row(key, info["name"])
-    console.print(table)
+        console.print(f"  [cyan]{key}[/cyan]  {info['name']}")
+    console.print("")
 
 
 def show_login_menu():
