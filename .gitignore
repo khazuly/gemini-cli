@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+image_generate_output/
+video_generate_output/
+cookies.json
+headers.json
+.env
