@@ -11,7 +11,7 @@ class GrepTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Search file contents using regular expressions"
+        return "Search file contents using regular expressions. Use this for finding code references, symbols, text patterns, or searching across the workspace. Do NOT use this for directory listings - use the 'list' tool instead."
 
     @property
     def parameters(self) -> dict:
@@ -20,11 +20,11 @@ class GrepTool(Tool):
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "The regex pattern to search for",
+                    "description": "The regex pattern to search for in file contents",
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory to search in (default: current)",
+                    "description": "Directory to search in (default: current working directory)",
                 },
                 "include": {
                     "type": "string",

@@ -10,7 +10,7 @@ class EditTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Modify files by replacing exact text matches"
+        return "Modify existing files by replacing exact text matches. Use this for editing files. Do not use for creating new files - use 'write' instead."
 
     @property
     def parameters(self) -> dict:

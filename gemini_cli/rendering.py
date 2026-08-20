@@ -57,17 +57,13 @@ class ToolRenderer:
         if call.state is ToolState.PENDING:
             return "pending..."
         if call.state is ToolState.RUNNING:
-            base = call.metadata.get("input_summary") or "running..."
-            duration = self._duration(call)
-            return f"{base} · {duration}" if duration else str(base)
+            return call.metadata.get("input_summary") or "running..."
         if call.state is ToolState.COMPLETED:
-            parts = [call.display_output or "completed", self._duration(call)]
-            return " · ".join(part for part in parts if part)
+            return call.display_output or "completed"
         if call.state is ToolState.CANCELLED:
             return "cancelled"
-        error = call.error or "failed"
-        duration = self._duration(call)
-        return f"{error} · {duration}" if duration else error
+        error = call.display_output or call.error or "failed"
+        return error
 
     def render_compact(self):
         # Minimal, panel-less compact display. Use subtle "Working..." header when active.
@@ -84,12 +80,12 @@ class ToolRenderer:
             # Build a single line: two-space indent, symbol, title, summary and duration
             line = Text("  ")
             line.append(symbol + " ", style=style)
-            line.append(str(title) + " ", style="tool")
+            line.append(str(title), style="tool")
             if summary:
-                line.append("  ")
+                line.append(" · ", style="muted")
                 line.append(str(summary), style="muted")
             if duration:
-                line.append("  · ")
+                line.append(" · ", style="muted")
                 line.append(duration, style="muted")
             lines.append(line)
 

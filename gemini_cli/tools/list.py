@@ -10,16 +10,16 @@ class ListTool(Tool):
 
     @property
     def description(self) -> str:
-        return "List files and directories in a given path (non-recursive by default)"
+        return "List files and directories in a given path. Use this for directory listings, checking what exists in a folder, or viewing the contents of the current directory. Non-recursive by default. Do NOT use grep with .* pattern as a substitute for directory listing."
 
     @property
     def parameters(self) -> dict:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory path to list (default: current directory)"},
+                "path": {"type": "string", "description": "Directory path to list (default: current working directory)"},
                 "show_hidden": {"type": "boolean", "description": "Include hidden files", "default": False},
-                "recursive": {"type": "boolean", "description": "Recursively list files (use search/grep for content search)", "default": False},
+                "recursive": {"type": "boolean", "description": "Recursively list files (use grep for content search instead)", "default": False},
             },
             "required": []
         }

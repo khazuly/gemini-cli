@@ -10,7 +10,7 @@ class ReadTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Read file contents from the codebase"
+        return "Read file contents from the codebase. Use this for reading a known file, inspecting a specific file, or reading relevant sections of a file."
 
     @property
     def parameters(self) -> dict:

@@ -10,7 +10,7 @@ class WriteTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Create new files or overwrite existing ones"
+        return "Create new files or overwrite existing ones. Use this only when creating a new file or intentionally overwriting a file is required. Do not use for editing existing files - use 'edit' instead."
 
     @property
     def parameters(self) -> dict:

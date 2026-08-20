@@ -9,8 +9,9 @@ from .write import WriteTool
 from .edit import EditTool
 from .grep import GrepTool
 from .list import ListTool
+from .shell import ShellTool
 
-ALL_TOOLS: list[Tool] = [ReadTool(), WriteTool(), EditTool(), GrepTool(), ListTool()]
+ALL_TOOLS: list[Tool] = [ReadTool(), WriteTool(), EditTool(), GrepTool(), ListTool(), ShellTool()]
 
 
 class ToolRegistry:
@@ -36,6 +37,9 @@ class ToolRegistry:
         examples.append("User: what files are in the current directory?\nAssistant should call: <tool_call>" + _json.dumps({"name": "list", "args": {"path": "."}}) + "</tool_call>")
         examples.append("User: find code references to requests\nAssistant should call: <tool_call>" + _json.dumps({"name": "grep", "args": {"pattern": "requests"}}) + "</tool_call>")
         examples.append("User: read README.md\nAssistant should call: <tool_call>" + _json.dumps({"name": "read", "args": {"filePath": "README.md"}}) + "</tool_call>")
+        examples.append("User: run git status\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "git status"}}) + "</tool_call>")
+        examples.append("User: run the tests\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "pytest"}}) + "</tool_call>")
+        examples.append("User: show python version\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "python --version"}}) + "</tool_call>")
 
         prompt = (
             "You are an autonomous coding and workspace agent. Help the user inspect, understand, modify, and validate the current workspace by using the available tools directly.\n\n"
@@ -59,7 +63,7 @@ class ToolRegistry:
             + "- Use `read` for reading a known file, inspecting a specific file, or reading relevant sections of a file.\n"
             + "- Use `edit` for modifying existing files by replacing exact text.\n"
             + "- Use `write` only when creating a new file or intentionally overwriting a file is required.\n"
-            + "- Use shell or command-execution tools only if such a tool is available and the operation genuinely requires a shell command.\n"
+            + "- Use `shell` for executing shell commands such as running tests, checking git status/diff, executing scripts, running builds, or inspecting system state. Prefer specialized tools (`list`, `read`, `grep`, `edit`, `write`) over shell equivalents (`ls`, `cat`, `grep`, `sed`, etc.) when available.\n"
             + "- Always choose the most specific available tool. Do not substitute content search for directory listing.\n"
             + "- A content search that matches everything, such as `grep` with `.*`, is not equivalent to `list`.\n\n"
             + "Current directory and workspace:\n"

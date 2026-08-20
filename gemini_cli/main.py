@@ -226,7 +226,6 @@ def chat_mode(client: GeminiClient, model: str, registry: ToolRegistry, tools_on
 
             # Iteratively handle tool calls: execute, inject results, and resend until LLM returns no tool_calls
             import json
-            renderer = ToolRenderer(details=details)
             iteration = 0
             max_iterations = 6
             while True:
@@ -238,6 +237,8 @@ def chat_mode(client: GeminiClient, model: str, registry: ToolRegistry, tools_on
                 if not tool_calls:
                     break
 
+                # Create fresh renderer for each iteration to avoid duplicate rendering
+                renderer = ToolRenderer(details=details)
                 tool_results = []
                 with ToolLive(renderer) as live:
                     for call_spec in tool_calls:
