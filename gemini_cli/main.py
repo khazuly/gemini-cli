@@ -1,17 +1,14 @@
-#!/usr/bin/env python3
-import json
 import sys
 import httpx
 from pathlib import Path
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from client import GeminiClient, load_cookies, save_cookies, MODELS
-from tools import ToolRegistry
-from ui import console, show_banner, show_menu, show_models, show_login_menu
+from .client import GeminiClient, load_cookies, save_cookies, COOKIES_FILE, MODELS
+from .tools import ToolRegistry
+from .ui import console, show_banner, show_menu, show_models, show_login_menu
 
-COOKIES_FILE = Path(__file__).parent / "auth" / "cookies.json"
-OUTPUT_DIR = Path(__file__).parent / "image_generate_output"
+OUTPUT_DIR = Path.home() / ".gemini-cli" / "output"
 
 
 def manual_cookie_login() -> dict[str, str] | None:
@@ -36,7 +33,7 @@ def manual_cookie_login() -> dict[str, str] | None:
 
 
 def download_image(url: str) -> str | None:
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     try:
         cookies = load_cookies()
         resp = httpx.get(url, cookies=cookies, follow_redirects=True, timeout=60)
@@ -209,10 +206,3 @@ def main() -> None:
         elif choice == "6":
             console.print("[bold red]Bye![/bold red]")
             break
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        console.print("\n[bold red]Bye![/bold red]")

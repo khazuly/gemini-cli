@@ -5,8 +5,9 @@ import random
 import httpx
 from pathlib import Path
 
-COOKIES_FILE = Path(__file__).parent.parent / "auth" / "cookies.json"
-HEADERS_FILE = Path(__file__).parent.parent / "headers.json"
+CONFIG_DIR = Path.home() / ".gemini-cli"
+COOKIES_FILE = CONFIG_DIR / "cookies.json"
+HEADERS_FILE = CONFIG_DIR / "headers.json"
 DEFAULT_METADATA = ["", "", "", None, None, None, None, None, None, ""]
 
 MODELS = {

@@ -1,7 +1,13 @@
 __pycache__/
 *.pyc
-image_generate_output/
-video_generate_output/
-auth/
-headers.json
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
 .env
+.venv/
+venv/
+auth/
+image_generate_output/

@@ -36,7 +36,7 @@ def show_menu(tools_enabled: bool = False):
 
 
 def show_models():
-    from client import MODELS
+    from .client import MODELS
     table = Table(title="[bold]Models[/bold]", box=box.ROUNDED, border_style="blue", show_header=True, header_style="bold white")
     table.add_column("Key", style="cyan", width=25)
     table.add_column("Name", style="white")

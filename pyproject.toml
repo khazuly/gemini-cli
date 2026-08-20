@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gemini-cli"
+version = "0.1.0"
+description = "Interactive Gemini Chat Client with Tool Calling"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.25.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+gem = "gemini_cli.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["gemini_cli*"]
