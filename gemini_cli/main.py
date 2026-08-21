@@ -193,9 +193,23 @@ def _ago(ts: int) -> str:
     return f"{delta // 86400}d ago"
 
 
+def _load_memory() -> str:
+    for name in ("GEMINI.md", ".gemini/MEMORY.md"):
+        try:
+            path = Path(name)
+            if path.is_file():
+                content = path.read_text(encoding="utf-8", errors="replace").strip()
+                if content:
+                    return f"\n\nProject memory from {name} (durable facts about this workspace):\n{content[:4000]}\n"
+        except Exception:
+            pass
+    return ""
+
+
 def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str, tools_on: bool, details: bool) -> str | None:
     header = MODELS.get(model, {}).get("header")
     system_prompt = registry.build_system_prompt() if tools_on else ""
+    system_prompt += _load_memory()
 
     def send(text: str) -> str:
         payload = f"{system_prompt}\n\n{text}" if system_prompt else text
@@ -206,6 +220,7 @@ def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str
     signatures: list[str] = []
     sig_counts: Counter = Counter()
     error_streak = 0
+    history: list[str] = []
     for _ in range(MAX_ITERATIONS if tools_on else 0):
         if resp.startswith("[Error]"):
             console.print(f"[error]{resp}[/error]")
@@ -257,6 +272,10 @@ def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str
             json.dumps({"call_id": c.id, "tool": c.name, "status": c.state.value, "result": (c.output or c.error or "")[:MAX_TOOL_OUTPUT]})
             for c in results
         ]
+        history.extend(blocks)
+        trimmed = len(history) > 60
+        if trimmed:
+            del history[:-60]
         touched: set[str] = set()
         for c in results:
             for key in ("filePath", "file_path", "path"):
@@ -272,8 +291,10 @@ def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str
         feedback = (
             f'Original user request: "{msg}"\n\n'
             "You emitted tool calls and their real results are below.\n"
-            "<tool_results>\n" + "\n".join(blocks) + "\n</tool_results>\n\n"
+            "<tool_results>\n" + "\n".join(history) + "\n</tool_results>\n\n"
+            + ("" if not trimmed else "(older tool results were omitted - never redo a call whose result already appears above)\n")
             + facts +
+            "All results from every iteration of this task are included above. Use them - NEVER repeat a tool call whose result is already shown.\n"
             "Continue the task now using these results.\n"
             "If more tools are needed, emit only the next <tool_call> lines. "
             "Otherwise reply with only a brief final summary of what was done and which files changed. "

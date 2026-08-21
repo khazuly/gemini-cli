@@ -7,17 +7,18 @@ import traceback
 from typing import Any
 
 from .base import Tool
-from .files import EditTool, GrepTool, ListTool, ReadTool, WriteTool
+from .files import EditTool, GrepTool, ListTool, ReadTool, RememberTool, WriteTool
 from .lifecycle import EventSink, ToolCall, ToolEvent, ToolResult, ToolState, next_call_id
 from .shell import ShellTool
 
-ALL_TOOLS: list[Tool] = [ReadTool(), WriteTool(), EditTool(), GrepTool(), ListTool(), ShellTool()]
+ALL_TOOLS: list[Tool] = [ReadTool(), WriteTool(), EditTool(), GrepTool(), ListTool(), ShellTool(), RememberTool()]
 
 _PARAM_ALIASES = {
     "filePath": ("path", "file_path", "file", "filename"),
     "pattern": ("regex", "query", "search"),
     "command": ("cmd",),
     "replaceAll": ("replace_all", "all"),
+    "note": ("text", "content", "fact", "memory"),
 }
 
 
@@ -106,7 +107,8 @@ class ToolRegistry:
             "- Use `edit` for modifying existing files by replacing exact text.\n"
             "- Use `write` only for creating new files or full rewrites.\n"
             "- Use `shell` for terminal operations such as running tests, checking git state, or executing scripts. Prefer specialized tools over shell equivalents like ls, cat, grep, sed.\n"
-            "- Long-running commands (dependency installs, full test suites, builds) often exceed the default 120000 ms shell timeout - pass a larger 'timeout' value in milliseconds (up to 600000) in the same tool call for such commands instead of letting them time out.\n\n"
+            "- Long-running commands (dependency installs, full test suites, builds) often exceed the default 120000 ms shell timeout - pass a larger 'timeout' value in milliseconds (up to 600000) in the same tool call for such commands instead of letting them time out.\n"
+            "- Use `remember` to persist important project facts (conventions, commands, gotchas) to GEMINI.md for future sessions.\n\n"
             "Examples:\n"
             'User: list the files in this folder -> <tool_call>{"name": "list", "args": {"path": "."}}</tool_call>\n'
             'User: run git status -> <tool_call>{"name": "shell", "args": {"command": "git status"}}</tool_call>\n'

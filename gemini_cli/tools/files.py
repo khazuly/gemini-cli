@@ -418,3 +418,56 @@ class ListTool(Tool):
             return ("\n".join(entries) if entries else "No entries found") + note
         except Exception as e:
             return f"Error listing directory: {e}"
+
+
+class RememberTool(Tool):
+    streaming = False
+
+    @property
+    def name(self) -> str:
+        return "remember"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Save a durable note about this project (conventions, commands, gotchas, decisions) "
+            "to GEMINI.md in the workspace root. Notes are loaded automatically in future sessions. "
+            "Use for facts worth remembering across tasks; never store secrets."
+        )
+
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {"note": {"type": "string", "description": "The fact to remember, one concise sentence"}},
+            "required": ["note"],
+        }
+
+    def title(self, args: dict) -> str:
+        return "Remember"
+
+    def execute(self, args: dict) -> ToolResult:
+        note = str(args.get("note") or "").strip()
+        if not note:
+            return ToolResult(output="Error: 'note' is required", error="'note' is required")
+        path = Path("GEMINI.md")
+        try:
+            existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+            marker = "## Agent notes"
+            entry = f"- {note}"
+            if entry in existing.splitlines():
+                return ToolResult(output=f"Note already saved: {note}", display_output="already saved", metadata={"path": str(path)})
+            if marker in existing:
+                content = existing.replace(marker, f"{marker}\n{entry}", 1)
+            else:
+                content = (existing + ("\n\n" if existing.strip() else "") + f"{marker}\n{entry}\n")
+            lines = content.splitlines()
+            while len("\n".join(lines)) > 8000:
+                idx = next((i for i, line in enumerate(lines) if line.startswith("- ")), None)
+                if idx is None:
+                    break
+                lines.pop(idx)
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return ToolResult(output=f"Saved to {path}: {note}", display_output="saved", metadata={"path": str(path)})
+        except Exception as e:
+            return ToolResult(output=f"Error saving note: {e}", error=str(e))
