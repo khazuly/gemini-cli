@@ -35,6 +35,7 @@ class ToolCall:
     metadata: dict[str, Any] = field(default_factory=dict)
     output: str | None = None
     display_output: str | None = None
+    progress: str | None = None
     error: str | None = None
     started_at: float | None = None
     finished_at: float | None = None

@@ -143,7 +143,7 @@ def test_shell_timeout():
     assert data["timeout"] is True
     assert data["exit"] == 124
     assert res.error.startswith("Command timed out after 1000 ms")
-    assert "retry with a larger timeout value" in res.error
+    assert '"timeout": 600000' in res.error
     assert "timeout" in res.display_output
 
 
@@ -176,7 +176,7 @@ def test_shell_output_truncation():
     res = tool.execute({"command": f"{sys.executable} -c 'print(\"A\" * 2000)'"})
     data = json.loads(res.output)
     assert data["truncated"] is True
-    assert "[output truncated]" in data["output"]
+    assert "[output truncated - showing last part]" in data["output"]
     assert len(data["output"]) < 600
     assert res.truncated is True
 
@@ -195,11 +195,10 @@ def test_shell_lifecycle_and_single_rendering():
     assert call.error is None
     assert "lifecycle_test" in call.output
 
-    # Verify event types and stable ID
+    # Verify event types and stable ID (tool_progress events may interleave for streaming tools)
     event_types = [e.type for e in events]
-    assert event_types == ["tool_pending", "tool_started", "tool_completed"]
-    for e in events:
-        assert e.call.id == "call_test_01"
+    assert [t for t in event_types if t != "tool_progress"] == ["tool_pending", "tool_started", "tool_completed"]
+    assert all(e.call.id == "call_test_01" for e in events)
 
     # Verify renderer handles updates without duplicates
     renderer = ToolRenderer(details=False)

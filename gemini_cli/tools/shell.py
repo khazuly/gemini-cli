@@ -90,6 +90,7 @@ def _kill(process: subprocess.Popen) -> None:
 
 
 class ShellTool(Tool):
+    streaming = True
     def __init__(self, max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS):
         self.max_output_chars = max_output_chars
 
@@ -168,7 +169,7 @@ class ShellTool(Tool):
             display = "failed"
         return ToolResult(output=json.dumps(structured, indent=2), display_output=display, metadata=metadata, error=error, truncated=truncated)
 
-    def execute(self, args: dict) -> ToolResult:
+    def execute(self, args: dict, progress=None) -> ToolResult:
         command = args.get("command")
         metadata: dict[str, Any] = {"command": str(command)}
         if not isinstance(command, str) or not command.strip():
@@ -195,42 +196,92 @@ class ShellTool(Tool):
             "stderr": subprocess.PIPE,
             "text": True,
             "errors": "replace",
+            "bufsize": 1,
         }
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
-        process = None
         try:
             process = subprocess.Popen(get_shell() + [command], **popen_kwargs)
-            stdout, stderr = process.communicate(timeout=timeout_ms / 1000.0)
-            combined = self._combine(stdout, stderr)
-            truncated = len(combined) > self.max_output_chars
-            if truncated:
-                combined = combined[: self.max_output_chars] + "\n[output truncated]"
-            exit_code = process.returncode
-            metadata.update({"exit_code": exit_code, "truncated": truncated, "timeout": False})
-            return self._result(combined, exit_code, truncated, False, None if exit_code == 0 else f"Process exited with code {exit_code}", metadata)
-        except subprocess.TimeoutExpired:
-            if process:
-                _kill(process)
-                try:
-                    stdout, stderr = process.communicate(timeout=0.5)
-                except Exception:
-                    stdout, stderr = "", ""
-            else:
-                stdout, stderr = "", ""
-            combined = self._combine(stdout, stderr) or ""
-            msg = (
-                f"Command timed out after {timeout_ms} ms. If this command is expected to take longer "
-                f"and is not waiting for interactive input, retry with a larger timeout value in milliseconds (max {MAX_TIMEOUT_MS})."
-            )
-            combined = f"{combined}\n[{msg}]" if combined else f"[{msg}]"
-            truncated = len(combined) > self.max_output_chars
-            if truncated:
-                combined = combined[: self.max_output_chars] + "\n[output truncated]"
-            metadata.update({"exit_code": 124, "truncated": truncated, "timeout": True})
-            return self._result(combined, 124, truncated, True, msg, metadata)
         except Exception as e:
             return self._result(f"Execution error: {e}", 1, False, False, str(e), metadata)
+        chunks, timed_out = self._pump(process, timeout_ms / 1000.0, progress)
+        combined = "".join(chunks)
+        exit_code = process.poll()
+        if timed_out:
+            msg = (
+                f"Command timed out after {timeout_ms} ms. If this command is expected to take longer "
+                f'and is not waiting for interactive input, re-emit the same tool call with a larger "timeout" '
+                f'(e.g. {{"name": "shell", "args": {{"command": "<same command>", "timeout": 600000}}}}), max 600000.'
+            )
+            truncated = len(combined) > self.max_output_chars
+            if truncated:
+                combined = self._truncate_tail(combined)
+            combined = f"{combined}\n[{msg}]" if combined else f"[{msg}]"
+            metadata.update({"exit_code": 124, "truncated": truncated, "timeout": True})
+            return self._result(combined, 124, truncated, True, msg, metadata)
+        truncated = False
+        if len(combined) > self.max_output_chars:
+            combined = self._truncate_tail(combined)
+            truncated = True
+        metadata.update({"exit_code": exit_code, "truncated": truncated, "timeout": False})
+        return self._result(combined, exit_code, truncated, False, None if exit_code == 0 else f"Process exited with code {exit_code}", metadata)
+
+    def _truncate_tail(self, text: str) -> str:
+        return "[output truncated - showing last part]\n...\n" + text[-self.max_output_chars :]
+
+    def _pump(self, process: subprocess.Popen, timeout_s: float, progress) -> tuple[list[str], bool]:
+        import queue
+        import threading
+
+        lines: queue.Queue = queue.Queue()
+
+        def pump(pipe) -> None:
+            try:
+                for line in iter(pipe.readline, ""):
+                    lines.put(line)
+            except Exception:
+                pass
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        readers = [threading.Thread(target=pump, args=(p,), daemon=True) for p in (process.stdout, process.stderr)]
+        for reader in readers:
+            reader.start()
+        deadline = time.monotonic() + timeout_s
+        chunks: list[str] = []
+        last_emit = 0.0
+        timed_out = False
+        while True:
+            try:
+                chunks.append(lines.get(timeout=0.1))
+                now = time.monotonic()
+                if progress and now - last_emit >= 0.3:
+                    last_emit = now
+                    progress(_output_tail("".join(chunks)))
+            except queue.Empty:
+                now = time.monotonic()
+                if process.poll() is not None and lines.empty():
+                    break
+                if now >= deadline:
+                    timed_out = True
+                    _kill(process)
+                    break
+                if progress and now - last_emit >= 0.5:
+                    last_emit = now
+                    progress(_output_tail("".join(chunks)))
+        for reader in readers:
+            reader.join(timeout=0.5)
+        while True:
+            try:
+                chunks.append(lines.get_nowait())
+            except queue.Empty:
+                break
+        if progress:
+            progress(_output_tail("".join(chunks)))
+        return chunks, timed_out
 
     @staticmethod
     def _combine(stdout: str | None, stderr: str | None) -> str:

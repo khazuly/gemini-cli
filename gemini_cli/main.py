@@ -7,6 +7,7 @@ import select
 import sys
 import termios
 import time
+from collections import Counter
 import tty
 from datetime import datetime
 from pathlib import Path
@@ -203,6 +204,7 @@ def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str
 
     resp = send(f"User message: {msg}")
     signatures: list[str] = []
+    sig_counts: Counter = Counter()
     error_streak = 0
     for _ in range(MAX_ITERATIONS if tools_on else 0):
         if resp.startswith("[Error]"):
@@ -228,6 +230,20 @@ def run_agent(client: GeminiClient, registry: ToolRegistry, model: str, msg: str
                     failed.error = "Malformed <tool_call>: arguments were not valid JSON. Re-emit the exact same tool call with valid JSON."
                     live.event_sink(ToolEvent("tool_failed", failed))
                     results.append(failed)
+                    continue
+                sig = json.dumps([spec["name"], spec["args"]], sort_keys=True)
+                sig_counts[sig] += 1
+                if sig_counts[sig] >= 4:
+                    blocked = ToolCall(id=spec["id"] or f"repeat_{len(results) + 1}", name=spec["name"], input=spec["args"])
+                    blocked.state = ToolState.ERROR
+                    blocked.title = f"{spec['name']} (repeated)"
+                    blocked.error = (
+                        f"This exact tool call was already made {sig_counts[sig] - 1} time(s) in this task and returned the same result each time. "
+                        "Do NOT repeat it. Review the earlier result above and take a different action."
+                    )
+                    blocked.output = f"Error: {blocked.error}"
+                    live.event_sink(ToolEvent("tool_failed", blocked))
+                    results.append(blocked)
                     continue
                 results.append(registry.execute_call(spec["name"], spec["args"], live.event_sink, call_id=spec["id"]))
         if results and all(c.state is ToolState.ERROR for c in results):

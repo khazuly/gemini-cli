@@ -105,7 +105,8 @@ class ToolRegistry:
             "- Use `read` for reading known files.\n"
             "- Use `edit` for modifying existing files by replacing exact text.\n"
             "- Use `write` only for creating new files or full rewrites.\n"
-            "- Use `shell` for terminal operations such as running tests, checking git state, or executing scripts. Prefer specialized tools over shell equivalents like ls, cat, grep, sed.\n\n"
+            "- Use `shell` for terminal operations such as running tests, checking git state, or executing scripts. Prefer specialized tools over shell equivalents like ls, cat, grep, sed.\n"
+            "- Long-running commands (dependency installs, full test suites, builds) often exceed the default 120000 ms shell timeout - pass a larger 'timeout' value in milliseconds (up to 600000) in the same tool call for such commands instead of letting them time out.\n\n"
             "Examples:\n"
             'User: list the files in this folder -> <tool_call>{"name": "list", "args": {"path": "."}}</tool_call>\n'
             'User: run git status -> <tool_call>{"name": "shell", "args": {"command": "git status"}}</tool_call>\n'
@@ -158,8 +159,14 @@ class ToolRegistry:
         call.started_at = time.monotonic()
         if sink:
             sink(ToolEvent("tool_started", call))
+        progress = None
+        if getattr(tool, "streaming", False) and sink:
+            def progress(tail: str) -> None:
+                call.progress = tail or None
+                sink(ToolEvent("tool_progress", call))
+
         try:
-            raw = tool.execute(args)
+            raw = tool.execute(args, progress=progress) if progress else tool.execute(args)
             result = raw if isinstance(raw, ToolResult) else tool.summarize_result(args, str(raw))
             call.state = ToolState.ERROR if result.error or (result.output or "").startswith("Error") else ToolState.COMPLETED
             call.output = result.output

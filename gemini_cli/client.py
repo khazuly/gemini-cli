@@ -187,6 +187,34 @@ class GeminiClient:
         return texts
 
     def _update_chat_metadata(self, data) -> None:
+        conv, reply = self._find_structured_pair(data)
+        if not (conv and reply):
+            conv, reply = self._scan_generic(data)
+        if conv and reply:
+            self.chat_metadata = [conv, reply]
+        elif conv and not self.chat_metadata[0]:
+            self.chat_metadata = [conv, ""]
+
+    def _find_structured_pair(self, data) -> tuple[str | None, str | None]:
+        stack = [data]
+        while stack:
+            node = stack.pop(0)
+            if isinstance(node, list):
+                if node and node[0] == "wrb.fr":
+                    for item in node:
+                        if (
+                            isinstance(item, list)
+                            and len(item) >= 2
+                            and isinstance(item[0], str)
+                            and isinstance(item[1], str)
+                            and item[0].startswith("c_")
+                            and item[1].startswith("r_")
+                        ):
+                            return item[0], item[1]
+                stack.extend(node)
+        return None, None
+
+    def _scan_generic(self, data) -> tuple[str | None, str | None]:
         conv, reply = None, None
         stack = [data]
         while stack:
@@ -207,10 +235,22 @@ class GeminiClient:
                 ):
                     conv, reply = conv or node[0], reply or node[1]
                 stack.extend(node)
-        if conv and reply:
-            self.chat_metadata = [conv, reply]
-        elif conv and not self.chat_metadata[0]:
-            self.chat_metadata = [conv, ""]
+        return conv, reply
+
+    @staticmethod
+    def _is_canned_error(text: str) -> bool:
+        t = text.strip().lower()
+        if len(t) > 200:
+            return False
+        markers = (
+            "encountering an error",
+            "something went wrong",
+            "an error occurred",
+            "can't respond to that",
+            "unable to respond",
+            "couldn't respond",
+        )
+        return any(marker in t for marker in markers)
 
     def _parse_streaming_response(self, raw: str) -> str:
         if not raw:
@@ -242,6 +282,20 @@ class GeminiClient:
         return body or longest or "[Error] Could not parse response"
 
     def send_message(self, message: str, model: str | None = None, tools_enabled: bool = False) -> str:
+        if self.chat_metadata[0] and not str(self.chat_metadata[0]).startswith("c_"):
+            self.new_chat()
+        elif self.chat_metadata[1] and not str(self.chat_metadata[1]).startswith("r_"):
+            self.chat_metadata[1] = ""
+        had_context = bool(self.chat_metadata[0])
+        for attempt in range(2):
+            body = self._send_once(message, model, tools_enabled)
+            if attempt == 0 and had_context and body and not body.startswith("[Error]") and self._is_canned_error(body):
+                self.new_chat()
+                continue
+            return body
+        return body
+
+    def _send_once(self, message: str, model: str | None, tools_enabled: bool) -> str:
         inner = [None] * 81
         inner[0] = [message, 0, None, None, None, None, 0]
         inner[1] = [self.language]

@@ -100,7 +100,7 @@ class ToolRenderer:
         if call.state is ToolState.PENDING:
             return "pending..."
         if call.state is ToolState.RUNNING:
-            return str(call.metadata.get("input_summary") or "running...")
+            return str(call.progress or call.metadata.get("input_summary") or "running...")
         if call.state is ToolState.COMPLETED:
             return str(call.display_output or "completed")
         if call.state is ToolState.CANCELLED:
