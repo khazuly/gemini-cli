@@ -56,7 +56,6 @@ class ToolEvent:
 
 EventSink = Callable[[ToolEvent], None]
 
-
 _call_counter = count(1)
 
 

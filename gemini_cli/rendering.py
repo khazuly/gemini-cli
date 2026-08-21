@@ -1,14 +1,65 @@
 from __future__ import annotations
 
-from typing import Iterable
+import re
 
-from rich.console import Group
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.prompt import Prompt
 from rich.text import Text
+from rich.theme import Theme
 
-from .ui import console
 from .tools.lifecycle import ToolCall, ToolEvent, ToolState
+
+THEME = Theme({
+    "brand": "bold cyan",
+    "user": "bold cyan",
+    "assistant": "bold green",
+    "tool": "cyan",
+    "running": "yellow",
+    "success": "green",
+    "warning": "yellow",
+    "error": "red",
+    "muted": "dim",
+    "info": "blue",
+})
+
+console = Console(theme=THEME)
+
+BANNER = """
+ ██████╗ ██████╗ ███████╗███╗   ██╗████████╗    ██████╗ ███████╗██╗████████╗███████╗
+██╔════╝██╔═══██╗██╔════╝████╗  ██║╚══██╔══╝    ██╔══██╗██╔════╝██║╚══██╔══╝██╔════╝
+██║     ██║   ██║██╔══██╗██╔══██╗██║   ██║      ██║  ██║█████╗  ██║██╔══╝  ██║   ██╔══╝
+██║     ██║   ██║██╔══╝  ██║╚██╗██║   ██║       ██║  ██║██╔══╝  ██║██║     ██║   ██║
+╚██████╗╚██████╔╝███████╗██║ ╚████║   ██║       ██████╔╝███████╗██║╚██████╗██║   ███████╗
+ ╚═════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═╝       ╚═════╝ ╚══════╝╚═╝ ╚═════╝╚═╝   ╚══════╝"""
+
+
+def show_banner() -> None:
+    console.print("[bold cyan]" + BANNER + "[/bold cyan]")
+    console.print("[dim]Interactive Gemini Chat Client with Tool Calling[/dim]\n")
+
+
+def show_menu(tools_enabled: bool = False) -> None:
+    status = "[green]ON[/green]" if tools_enabled else "[red]OFF[/red]"
+    console.print("  [cyan]1[/cyan] [bold green]Chat[/bold green]    Send message to Gemini")
+    console.print("  [cyan]2[/cyan] [bold green]Resume[/bold green]   Continue a previous conversation")
+    console.print("  [cyan]3[/cyan] [bold yellow]Image[/bold yellow]   Generate image")
+    console.print("  [cyan]4[/cyan] [bold magenta]Models[/bold magenta]  Switch AI model")
+    console.print("  [cyan]5[/cyan] [bold blue]Tools[/bold blue]   Toggle tools on/off")
+    console.print("  [cyan]6[/cyan] [bold red]Exit[/bold red]    Quit")
+    console.print(f"\nTools: {status}")
+
+
+def show_models(models: dict) -> None:
+    console.print("\nAvailable models:")
+    for key, info in models.items():
+        console.print(f"  [cyan]{key}[/cyan]  {info['name']}")
+    console.print("")
+
+
+def ask(prompt: str, default: str = "") -> str:
+    return Prompt.ask(prompt, default=default) if default else Prompt.ask(prompt)
 
 
 class ToolRenderer:
@@ -23,20 +74,16 @@ class ToolRenderer:
 
     def handle(self, event: ToolEvent) -> None:
         call = event.call
-        # Ensure a single visual item per call id. Replace existing entry in-place when updates arrive.
         if call.id not in self._by_id:
             self.calls.append(call)
             self._by_id[call.id] = call
-        else:
-            # replace the old call object in the list to reflect updates
-            old = self._by_id[call.id]
-            try:
-                idx = self.calls.index(old)
-                self.calls[idx] = call
-            except ValueError:
-                # fallback: append if not found
-                self.calls.append(call)
-            self._by_id[call.id] = call
+            return
+        old = self._by_id[call.id]
+        try:
+            self.calls[self.calls.index(old)] = call
+        except ValueError:
+            self.calls.append(call)
+        self._by_id[call.id] = call
 
     def _symbol(self, call: ToolCall) -> tuple[str, str]:
         if call.state is ToolState.COMPLETED:
@@ -49,93 +96,59 @@ class ToolRenderer:
             return "○", "muted"
         return "●", "running"
 
-    def _duration(self, call: ToolCall) -> str:
-        duration = call.duration
-        return f"{duration:.2f}s" if duration is not None else ""
-
     def _summary(self, call: ToolCall) -> str:
         if call.state is ToolState.PENDING:
             return "pending..."
         if call.state is ToolState.RUNNING:
-            return call.metadata.get("input_summary") or "running..."
+            return str(call.metadata.get("input_summary") or "running...")
         if call.state is ToolState.COMPLETED:
-            return call.display_output or "completed"
+            return str(call.display_output or "completed")
         if call.state is ToolState.CANCELLED:
             return "cancelled"
-        error = call.display_output or call.error or "failed"
-        return error
+        if call.state is ToolState.ERROR:
+            return str(call.error or call.display_output or "failed")
+        return str(call.display_output or call.error or "failed")
 
     def render_compact(self):
-        # Minimal, panel-less compact display. Use subtle "Working..." header when active.
         lines: list[Text] = []
-        any_running = any(c.state in (ToolState.RUNNING, ToolState.PENDING) for c in self.calls)
-        if any_running:
+        if any(c.state in (ToolState.RUNNING, ToolState.PENDING) for c in self.calls):
             lines.append(Text("Working...", style="muted"))
-
         for call in self.calls:
             symbol, style = self._symbol(call)
-            title = call.title or call.name
-            summary = self._summary(call)
-            duration = self._duration(call)
-            # Build a single line: two-space indent, symbol, title, summary and duration
+            duration = call.duration
             line = Text("  ")
             line.append(symbol + " ", style=style)
-            line.append(str(title), style="tool")
+            line.append(str(call.title or call.name), style="tool")
+            summary = self._summary(call)
             if summary:
                 line.append(" · ", style="muted")
-                line.append(str(summary), style="muted")
-            if duration:
-                line.append(" · ", style="muted")
-                line.append(duration, style="muted")
+                line.append(summary, style="muted")
+            if duration is not None:
+                line.append(f" · {duration:.2f}s", style="muted")
             lines.append(line)
-
-        if not lines:
-            return Text("")
-        return Group(*lines)
+        return Group(*lines) if lines else Text("")
 
     def render_static(self):
-        # If details not requested, use compact view
         if not self.details:
             return self.render_compact()
-        rows: list[Group] = []
+        rows = []
         for call in self.calls:
             symbol, style = self._symbol(call)
-            title = call.title or call.name
-            body_lines: list[Text] = []
-            body_lines.append(Text(f"  {symbol} {title}", style=style))
-
+            body = [Text(f"  {symbol} {call.title or call.name}", style=style)]
             input_summary = call.metadata.get("input_summary")
             if input_summary:
-                body_lines.append(Text(""))
-                body_lines.append(Text("    input:", style="muted"))
-                for line in str(input_summary).splitlines():
-                    body_lines.append(Text(f"      {line}"))
-
-            # show other metadata keys (except input_summary)
-            other_meta = {k: v for k, v in call.metadata.items() if k != "input_summary"}
-            if other_meta:
-                body_lines.append(Text(""))
-                body_lines.append(Text("    metadata:", style="muted"))
-                for k, v in other_meta.items():
-                    body_lines.append(Text(f"      {k}: {v}"))
-
-            result = call.display_output or call.error or ""
+                body.append(Text("    input:", style="muted"))
+                body.extend(Text(f"      {line}") for line in str(input_summary).splitlines())
+            result = str(call.display_output or call.error or "")
             if result:
-                body_lines.append(Text(""))
-                body_lines.append(Text("    result:", style="muted"))
-                txt = str(result)
-                if len(txt) > 1000:
-                    txt = txt[:1000] + "\n      ... (truncated)"
-                for line in txt.splitlines():
-                    body_lines.append(Text(f"      {line}"))
-
+                body.append(Text("    result:", style="muted"))
+                if len(result) > 1000:
+                    result = result[:1000] + "\n      ... (truncated)"
+                body.extend(Text(f"      {line}") for line in result.splitlines())
             if call.duration is not None:
-                body_lines.append(Text(""))
-                body_lines.append(Text("    duration:", style="muted"))
-                body_lines.append(Text(f"      {self._duration(call)}"))
-
-            rows.append(Group(*body_lines))
-        return Group(*rows)
+                body.append(Text(f"    duration: {call.duration:.2f}s", style="muted"))
+            rows.append(Group(*body))
+        return Group(*rows) if rows else Text("")
 
 
 class ToolLive:
@@ -161,15 +174,26 @@ class ToolLive:
             self.live.update(self.renderer.render_compact())
 
 
+def clean_response(text: str) -> str:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"</?tool_call>", "", text)
+    return text.strip()
+
+
+_CODE_LINE = re.compile(r"^\s*(def |class |import |from \S+ import|return\b|print\(|if __name__|@)", re.MULTILINE)
+
+
+def _wrap_unfenced_code(text: str) -> str:
+    if "```" in text or len(_CODE_LINE.findall(text)) < 4:
+        return text
+    return f"```\n{text.strip()}\n```"
+
+
 def render_assistant(text: str) -> None:
-    # Assistant responses rendered as plain Markdown under a simple heading
     console.print("\n[assistant]Gemini:[/assistant]\n")
-    console.print(Markdown(text))
+    console.print(Markdown(_wrap_unfenced_code(clean_response(text))))
 
 
-def render_footer(model: str, session_id: str = "", tools_enabled: bool = False) -> None:
-    parts = [model]
-    if session_id:
-        parts.append(f"session {session_id[:8]}")
-    parts.append("tools on" if tools_enabled else "tools off")
+def render_footer(model: str, tools_enabled: bool = False) -> None:
+    parts = [model, "tools on" if tools_enabled else "tools off"]
     console.print(f"[muted]{' · '.join(parts)}[/muted]")

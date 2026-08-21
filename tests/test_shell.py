@@ -142,7 +142,8 @@ def test_shell_timeout():
     data = json.loads(res.output)
     assert data["timeout"] is True
     assert data["exit"] == 124
-    assert res.error == "Command timed out"
+    assert res.error.startswith("Command timed out after 1000 ms")
+    assert "retry with a larger timeout value" in res.error
     assert "timeout" in res.display_output
 
 

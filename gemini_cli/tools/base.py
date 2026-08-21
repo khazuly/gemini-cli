@@ -18,7 +18,7 @@ class Tool(ABC):
     def parameters(self) -> dict: ...
 
     @abstractmethod
-    def execute(self, args: dict[str, Any]) -> str: ...
+    def execute(self, args: dict[str, Any]) -> str | ToolResult: ...
 
     def title(self, args: dict[str, Any]) -> str | None:
         return None
@@ -30,6 +30,3 @@ class Tool(ABC):
         lines = output.splitlines()
         display = f"{len(lines)} lines" if lines else "empty output"
         return ToolResult(output=output, display_output=display, truncated=len(output) > 2000)
-
-    def to_prompt(self) -> str:
-        return f"{self.name}: {self.description}\nParameters: {self.parameters}"

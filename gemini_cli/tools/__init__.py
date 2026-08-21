@@ -1,17 +1,57 @@
+from __future__ import annotations
+
 import json
+import re
 import time
 import traceback
 from typing import Any
+
 from .base import Tool
+from .files import EditTool, GrepTool, ListTool, ReadTool, WriteTool
 from .lifecycle import EventSink, ToolCall, ToolEvent, ToolResult, ToolState, next_call_id
-from .read import ReadTool
-from .write import WriteTool
-from .edit import EditTool
-from .grep import GrepTool
-from .list import ListTool
 from .shell import ShellTool
 
 ALL_TOOLS: list[Tool] = [ReadTool(), WriteTool(), EditTool(), GrepTool(), ListTool(), ShellTool()]
+
+_PARAM_ALIASES = {
+    "filePath": ("path", "file_path", "file", "filename"),
+    "pattern": ("regex", "query", "search"),
+    "command": ("cmd",),
+    "replaceAll": ("replace_all", "all"),
+}
+
+
+def _normalize_args(tool: Tool, args: dict[str, Any]) -> dict[str, Any]:
+    props = (tool.parameters or {}).get("properties") or {}
+    normalized = dict(args)
+    for canonical, aliases in _PARAM_ALIASES.items():
+        if canonical in props and normalized.get(canonical) in (None, ""):
+            for alias in aliases:
+                if normalized.get(alias) not in (None, ""):
+                    normalized[canonical] = normalized.pop(alias)
+                    break
+    return normalized
+
+
+_TOOL_ALIASES = {
+    "bash": "shell",
+    "run_command": "shell",
+    "terminal": "shell",
+    "execute": "shell",
+    "cat": "read",
+    "view": "read",
+    "open": "read",
+    "ls": "list",
+    "dir": "list",
+    "search": "grep",
+    "find": "grep",
+    "glob": "grep",
+    "create": "write",
+    "new_file": "write",
+    "patch": "edit",
+    "replace": "edit",
+    "str_replace": "edit",
+}
 
 
 class ToolRegistry:
@@ -21,82 +61,58 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def resolve_name(self, name: str) -> str | None:
+        lowered = name.lower()
+        if lowered in self._tools:
+            return lowered
+        return _TOOL_ALIASES.get(lowered)
+
     def list_tools(self) -> list[Tool]:
         return list(self._tools.values())
 
     def build_system_prompt(self) -> str:
-        """Return a system prompt that instructs the model how to use Gem's tools."""
         tools_desc = []
         for t in self._tools.values():
             tools_desc.append(f"- {t.name}: {t.description}")
-            tools_desc.append(f"  Parameters: {json.dumps(t.parameters, indent=2)}")
-
-        import json as _json
-        examples = []
-        examples.append("User: list the files in this folder\nAssistant should call: <tool_call>" + _json.dumps({"name": "list", "args": {"path": "."}}) + "</tool_call>")
-        examples.append("User: what files are in the current directory?\nAssistant should call: <tool_call>" + _json.dumps({"name": "list", "args": {"path": "."}}) + "</tool_call>")
-        examples.append("User: find code references to requests\nAssistant should call: <tool_call>" + _json.dumps({"name": "grep", "args": {"pattern": "requests"}}) + "</tool_call>")
-        examples.append("User: read README.md\nAssistant should call: <tool_call>" + _json.dumps({"name": "read", "args": {"filePath": "README.md"}}) + "</tool_call>")
-        examples.append("User: run git status\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "git status"}}) + "</tool_call>")
-        examples.append("User: run the tests\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "pytest"}}) + "</tool_call>")
-        examples.append("User: show python version\nAssistant should call: <tool_call>" + _json.dumps({"name": "shell", "args": {"command": "python --version"}}) + "</tool_call>")
-
-        prompt = (
-            "You are an autonomous coding and workspace agent. Help the user inspect, understand, modify, and validate the current workspace by using the available tools directly.\n\n"
-            "Available tools:\n\n"
-            + "\n".join(tools_desc)
-            + "\n\nTool call format:\n"
-            + "When a tool is needed, output EXACTLY one or more tool calls in this format, each on its own line:\n"
-            + "<tool_call>{\"name\": \"tool_name\", \"args\": {\"param1\": \"value1\"}}</tool_call>\n\n"
-            + "Core behavior:\n"
-            + "- Understand the user's actual intent and act on it without requiring tool names from the user.\n"
-            + "- Use tools proactively when the requested information or operation can be handled by the tools.\n"
-            + "- Do not ask the user to run commands, list files, read files, search code, or edit files when an available tool can do it.\n"
-            + "- Treat tool results as authoritative. Do not invent files, code, command output, edits, or test results.\n"
-            + "- If a tool result is insufficient, analyze what is missing and call the next appropriate tool.\n"
-            + "- Continue using tools iteratively until the request can be completed reliably or a real limitation is reached.\n"
-            + "- Do not guess about files, code, configuration, or output when a tool can verify it.\n"
-            + "- Ask for clarification only when the request is genuinely ambiguous or requires information that cannot reasonably be inferred.\n\n"
-            + "Tool selection:\n"
-            + "- Use `list` for listing files, listing directories, checking what exists in a directory, or viewing the contents of the current directory.\n"
-            + "- Use `grep` for searching file contents, finding symbols, finding references, locating text patterns, or searching across the workspace.\n"
-            + "- Use `read` for reading a known file, inspecting a specific file, or reading relevant sections of a file.\n"
-            + "- Use `edit` for modifying existing files by replacing exact text.\n"
-            + "- Use `write` only when creating a new file or intentionally overwriting a file is required.\n"
-            + "- Use `shell` for executing shell commands such as running tests, checking git status/diff, executing scripts, running builds, or inspecting system state. Prefer specialized tools (`list`, `read`, `grep`, `edit`, `write`) over shell equivalents (`ls`, `cat`, `grep`, `sed`, etc.) when available.\n"
-            + "- Always choose the most specific available tool. Do not substitute content search for directory listing.\n"
-            + "- A content search that matches everything, such as `grep` with `.*`, is not equivalent to `list`.\n\n"
-            + "Current directory and workspace:\n"
-            + "- When the user says this folder, here, current directory, or this directory, interpret it as the current workspace directory unless another path is specified.\n"
-            + "- For a simple directory listing, call `list` on the requested directory and do not recursively inspect the workspace.\n"
-            + "- Use recursive listing or broad search only when the user's request requires subdirectories or workspace-wide exploration.\n\n"
-            + "Workspace exploration:\n"
-            + "- When a task requires understanding an existing codebase, inspect relevant files before making assumptions.\n"
-            + "- Prefer targeted exploration. Start with high-value files such as README files, package metadata, configuration, relevant source files, tests, and project instructions.\n"
-            + "- Do not blindly read every file. Do not repeat the same search when current tool results are still relevant.\n"
-            + "- If multiple independent facts are needed and multiple tool calls are possible, emit multiple tool calls together.\n\n"
-            + "Code changes:\n"
-            + "- Before editing, understand the relevant implementation, surrounding code, and existing project conventions.\n"
-            + "- Make the smallest appropriate change. Do not rewrite unrelated code.\n"
-            + "- Prefer editing existing files over creating new files unless a new file is necessary.\n"
-            + "- Never revert user changes unless the user explicitly asks. Do not overwrite unrelated work.\n"
-            + "- After edits, inspect the result. When validation tools are available or project test commands are known, run relevant verification.\n"
-            + "- Do not claim success unless the editing tool succeeded. Do not claim verification unless it was actually performed.\n\n"
-            + "Errors and sensitive data:\n"
-            + "- When a tool fails, use the actual error to decide the next step. Retry only when the retry is meaningful.\n"
-            + "- If the operation cannot be completed, report the real limitation concisely.\n"
-            + "- Treat credentials, API keys, tokens, passwords, cookies, and private configuration values as sensitive.\n"
-            + "- Do not reproduce secrets in responses. Summarize sensitive tool output without exposing secret values.\n\n"
-            + "Communication:\n"
-            + "- Be concise and direct. Do not narrate every internal action.\n"
-            + "- Do not expose chain-of-thought or private reasoning.\n"
-            + "- Final responses should focus on what was found, what was changed, what was verified, and any relevant limitation.\n"
-            + "- Never simulate tool usage. Only report operations that were actually executed.\n\n"
-            + "Examples:\n"
-            + "\n".join(examples)
-            + "\n\nRemember: act as a capable autonomous coding agent. Use the right tool, inspect results, continue when more information is needed, and answer directly when the work is complete."
+            tools_desc.append(f"  Parameters: {json.dumps(t.parameters)}")
+        return (
+            "You are Gem, a precise and experienced software engineer and autonomous coding agent. Keep going until the user's query is completely resolved before ending your turn.\n\n"
+            "Available tools:\n\n" + "\n".join(tools_desc) + "\n\n"
+            "Tool call format:\n"
+            "When you need to use a tool, output one or more tool calls, each on its own line, in exactly this format:\n"
+            '<tool_call>{"name": "tool_name", "args": {"param1": "value1"}}</tool_call>\n'
+            'Inside JSON string arguments, escape newlines as \\n and double quotes as \\" so the JSON stays valid.\n\n'
+            "Response rules:\n"
+            "- Respond with EITHER tool calls OR your final answer to the user. Never mix narration with tool calls.\n"
+            "- NEVER narrate, summarize, or describe your internal analysis or thought process. Never output text like \"Reviewing the input\", \"Analyzing the request\", \"I have finished analyzing\", or any similar meta-commentary.\n"
+            "- NEVER explain what you are about to do. Just emit the tool calls immediately.\n"
+            "- When you say you will do something, ACTUALLY emit the tool call instead of describing it.\n"
+            "- After receiving tool results, continue immediately with the next tool calls or give the final answer. Do not comment on the results themselves.\n"
+            "- Treat tool results as authoritative. Never invent files, code, command output, edits, or test results.\n"
+            "- A non-zero exit code does not mean nothing happened - commands can have partial effects. Verify the actual state with list/read/shell before claiming success or failure, and report exactly what changed and what remains.\n"
+            "- NEVER ask the user to paste code, files, or command output. Use your tools to read them yourself and keep working autonomously until the task is fully resolved.\n"
+            "- Work ONLY on the exact file paths confirmed by your own list/read results. NEVER invent file names or switch to different ones (such as 'main.py' or 'index.js') that did not come from tool output or the user.\n"
+            "- When reporting on files, name only paths you actually accessed with tools in this task.\n"
+            "- Modify existing files in place with edit. Use write ONLY to create a genuinely new file the user asked for - never to park modified content of an existing file under a different name.\n"
+            "- Iterate with tools until the task is fully done, then reply with only the final answer: what was found, changed, and verified.\n"
+            "- When work was done via tools, keep the final answer to a brief summary: what was done, which file paths changed, and how it was verified. NEVER reprint code or file contents you already wrote or edited via tools. Do not display code to the user unless they explicitly asked for it in their request.\n"
+            "- Always wrap any code you do show in triple-backtick fenced code blocks with a language tag.\n"
+            "- Keep final answers concise and direct. Use markdown when helpful.\n"
+            "- Ask for clarification only when the request is genuinely ambiguous.\n\n"
+            "Tool selection:\n"
+            "- Use `list` for directory listings and checking what exists in a folder.\n"
+            "- Use `grep` for searching file contents across the workspace.\n"
+            "- Use `read` for reading known files.\n"
+            "- Use `edit` for modifying existing files by replacing exact text.\n"
+            "- Use `write` only for creating new files or full rewrites.\n"
+            "- Use `shell` for terminal operations such as running tests, checking git state, or executing scripts. Prefer specialized tools over shell equivalents like ls, cat, grep, sed.\n\n"
+            "Examples:\n"
+            'User: list the files in this folder -> <tool_call>{"name": "list", "args": {"path": "."}}</tool_call>\n'
+            'User: run git status -> <tool_call>{"name": "shell", "args": {"command": "git status"}}</tool_call>\n'
+            'User: run the tests -> <tool_call>{"name": "shell", "args": {"command": "pytest"}}</tool_call>\n'
+            'User: find code references to requests -> <tool_call>{"name": "grep", "args": {"pattern": "requests"}}</tool_call>\n'
+            "User: read README.md -> read README.md with the read tool, then answer directly without commentary."
         )
-        return prompt
 
     def execute(self, name: str, args: dict[str, Any]) -> str:
         return self.execute_call(name, args).output or ""
@@ -105,29 +121,49 @@ class ToolRegistry:
         call = ToolCall(id=call_id or next_call_id(), name=name, input=args)
         tool = self.get(name)
         if not tool:
+            resolved = self.resolve_name(name)
+            if resolved:
+                call.name = resolved
+                name = resolved
+                tool = self.get(resolved)
+        if not tool:
             call.state = ToolState.ERROR
-            call.error = f"Unknown tool '{name}'"
+            call.error = (
+                f"Unknown tool '{name}'. Available tools: {', '.join(self._tools)}. "
+                "Re-emit the <tool_call> using one of these exact tool names with valid JSON arguments."
+            )
+            call.output = f"Error: {call.error}"
             call.finished_at = time.monotonic()
             if sink:
                 sink(ToolEvent("tool_failed", call))
             return call
-
+        args = _normalize_args(tool, args)
+        call.input = args
+        required = (tool.parameters or {}).get("required") or []
+        missing = [r for r in required if args.get(r) in (None, "")]
+        if missing:
+            props = list(((tool.parameters or {}).get("properties") or {}).keys())
+            call.state = ToolState.ERROR
+            call.error = f"Missing required argument(s) {missing} for tool '{name}'. Valid params: {props}. Re-emit the exact same tool call with the correct arguments."
+            call.output = f"Error: {call.error}"
+            call.finished_at = time.monotonic()
+            if sink:
+                sink(ToolEvent("tool_failed", call))
+            return call
         call.title = tool.title(args)
         call.metadata = {"input_summary": tool.summarize_input(args)}
         if sink:
             sink(ToolEvent("tool_pending", call))
-
         call.state = ToolState.RUNNING
         call.started_at = time.monotonic()
         if sink:
             sink(ToolEvent("tool_started", call))
-
         try:
             raw = tool.execute(args)
             result = raw if isinstance(raw, ToolResult) else tool.summarize_result(args, str(raw))
             call.state = ToolState.ERROR if result.error or (result.output or "").startswith("Error") else ToolState.COMPLETED
             call.output = result.output
-            call.display_output = result.display_output
+            call.display_output = result.display_output if call.state is ToolState.COMPLETED else None
             call.error = result.error or (result.output if call.state is ToolState.ERROR else None)
             call.title = result.title or call.title
             call.metadata = {**call.metadata, **result.metadata}
@@ -153,19 +189,155 @@ class ToolRegistry:
         return call
 
     def parse_tool_calls(self, text: str) -> list[dict]:
-        import re
-        pattern = r"<tool_call>(\{.*?\})</tool_call>"
         calls: list[dict] = []
-        for match in re.finditer(pattern, text, re.DOTALL):
+        for match in re.finditer(r"<tool_call>(.*?)(?:</tool_call>|(?=<tool_call>)|$)", text, re.DOTALL):
             raw = match.group(0)
-            try:
-                data = json.loads(match.group(1))
-                calls.append({
-                    "name": data.get("name"),
-                    "args": data.get("args", {}),
-                    "raw": raw,
-                    "id": data.get("id") or data.get("call_id")
-                })
-            except json.JSONDecodeError:
-                calls.append({"name": None, "args": {}, "raw": raw, "id": None})
+            payload = match.group(1).strip()
+            data = self._loads_lenient(payload)
+            if isinstance(data, dict) and data.get("name"):
+                calls.append({"name": data.get("name"), "args": self._coerce_args(data), "raw": raw, "id": data.get("id") or data.get("call_id")})
+                continue
+            salvaged = self._salvage_truncated_json(payload)
+            if isinstance(salvaged, dict) and salvaged.get("name"):
+                calls.append({"name": salvaged.get("name"), "args": self._coerce_args(salvaged), "raw": raw, "id": None})
+                continue
+            extracted = self._extract_write_args(payload)
+            if extracted:
+                calls.append({"name": "write", "args": extracted, "raw": raw, "id": None})
+                continue
+            calls.append({"name": None, "args": {}, "raw": raw, "id": None})
+        if not calls:
+            bare = re.search(r'\{\s*"name"\s*:', text)
+            if bare:
+                salvaged = self._salvage_truncated_json(text[bare.start():])
+                if isinstance(salvaged, dict) and salvaged.get("name"):
+                    calls.append({"name": salvaged.get("name"), "args": self._coerce_args(salvaged), "raw": bare.group(0), "id": None})
         return calls
+
+    @staticmethod
+    def _coerce_args(data: dict) -> dict:
+        args = data.get("args")
+        if not isinstance(args, dict):
+            args = {k: v for k, v in data.items() if k not in ("name", "id", "call_id")}
+        return args
+
+    @staticmethod
+    def _loads_lenient(payload: str) -> dict | None:
+        candidates = [payload]
+        start, end = payload.find("{"), payload.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(payload[start : end + 1])
+        for candidate in candidates:
+            variants = (
+                candidate,
+                candidate.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'"),
+                re.sub(r",\s*([}\]])", r"\1", candidate),
+            )
+            for variant in variants:
+                try:
+                    return json.loads(variant, strict=False)
+                except json.JSONDecodeError:
+                    continue
+        repaired = ToolRegistry._repair_quotes(candidates[-1] if candidates else payload)
+        if repaired:
+            try:
+                return json.loads(repaired, strict=False)
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    @staticmethod
+    def _repair_quotes(payload: str) -> str | None:
+        start, end = payload.find("{"), payload.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        body = payload[start : end + 1]
+        out: list[str] = []
+        in_string = False
+        i = 0
+        while i < len(body):
+            ch = body[i]
+            if in_string and ch == "\\" and i + 1 < len(body):
+                out.append(body[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                if not in_string:
+                    in_string = True
+                    out.append(ch)
+                else:
+                    j = i + 1
+                    while j < len(body) and body[j] in " \t\r\n":
+                        j += 1
+                    nxt = body[j] if j < len(body) else ""
+                    if nxt in ",}]:":
+                        in_string = False
+                        out.append(ch)
+                    else:
+                        out.append('\\"')
+            else:
+                out.append(ch)
+            i += 1
+        return "".join(out)
+
+    @staticmethod
+    def _salvage_truncated_json(payload: str) -> dict | None:
+        start = payload.find("{")
+        if start == -1:
+            return None
+        body = payload[start:]
+        stack: list[str] = []
+        in_string = False
+        escape = False
+        best: tuple[int, list[str]] | None = None
+        closed_at = 0
+        for i, ch in enumerate(body):
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch in "}]" and stack:
+                stack.pop()
+                if not stack and not closed_at:
+                    closed_at = i + 1
+            elif ch == "," and stack:
+                best = (i, list(stack))
+        if not stack and not in_string:
+            for candidate in (body, body[:closed_at] if closed_at else ""):
+                if not candidate:
+                    continue
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
+            return None
+        if best is None:
+            return None
+        cut = body[: best[0] + 1].rstrip().rstrip(",")
+        closers = "".join("}" if s == "{" else "]" for s in reversed(best[1]))
+        try:
+            return json.loads(cut + closers)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _extract_write_args(payload: str) -> dict | None:
+        path_match = re.search(r'"(?:filePath|file_path|path)"\s*:\s*"([^"]+)"', payload)
+        content_match = re.search(r'"content"\s*:\s*"', payload)
+        if not path_match or not content_match:
+            return None
+        start = content_match.end()
+        end = payload.rfind('"')
+        if end <= start:
+            return None
+        content = payload[start:end]
+        content = content.replace("\\\\", "\x00").replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"').replace("\x00", "\\")
+        return {"filePath": path_match.group(1), "content": content}
